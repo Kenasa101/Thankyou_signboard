@@ -315,4 +315,184 @@
   }
 
   // Photo preview for Admin photo upload
-  photoUpload.addEventListener('
+  photoUpload.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      eventInfo.photoURL = ev.target.result;
+      photoPreview.src = ev.target.result;
+      photoPreview.style.display = 'block';
+      saveEventInfo();
+    }
+    reader.readAsDataURL(file);
+  });
+
+  // Save event info when admin edits title or date
+  document.getElementById('event-title').addEventListener('input', (e) => {
+    eventInfo.title = e.target.value;
+    saveEventInfo();
+  });
+
+  document.getElementById('event-date').addEventListener('input', (e) => {
+    eventInfo.date = e.target.value;
+    saveEventInfo();
+  });
+
+  function saveEventInfo() {
+    localStorage.setItem('eventInfo', JSON.stringify(eventInfo));
+  }
+
+  // Video preview on user upload
+  videoUpload.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) {
+      videoPreview.style.display = 'none';
+      videoPreview.src = '';
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    videoPreview.src = url;
+    videoPreview.style.display = 'block';
+  });
+
+  // Form submission handler
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    if(role === 'user') {
+      if(signaturePad.isEmpty()) {
+        alert("Please provide your signature.");
+        return;
+      }
+      const videoFile = videoUpload.files[0];
+      if(!videoFile) {
+        alert("Please upload a video.");
+        return;
+      }
+      if(videoFile.size > 10*1024*1024) { // 10 MB limit
+        alert("Video size must be less than 10MB.");
+        return;
+      }
+      const userName = document.getElementById('user-name').value.trim();
+      if(!userName) {
+        alert("Please enter your name.");
+        return;
+      }
+      const wishText = document.getElementById('wish-text').value.trim();
+      if(!wishText) {
+        alert("Please enter your wish.");
+        return;
+      }
+
+      // Prepare signature image data
+      const signatureDataURL = signaturePad.toDataURL('image/png');
+
+      // Process video with watermark and signature (simplified)
+      await addWatermarkToVideo(videoFile, userName, signatureDataURL, wishText);
+
+      // Save wish in array
+      wishes.push({
+        userName,
+        wishText,
+        signatureDataURL,
+        videoFileName: videoFile.name,
+        eventInfo: {...eventInfo},
+        timestamp: new Date().toISOString()
+      });
+
+      alert("Wish submitted successfully!");
+
+      // Clear form
+      videoUpload.value = '';
+      videoPreview.style.display = 'none';
+      document.getElementById('user-name').value = '';
+      document.getElementById('wish-text').value = '';
+      signaturePad.clear();
+      downloadContainer.innerHTML = '';
+
+    } else {
+      alert("Only users can submit wishes.");
+    }
+  });
+
+  // Add watermark to video using FFmpeg.wasm (basic example)
+  async function addWatermarkToVideo(videoFile, userName, signatureDataURL, wishText) {
+    if(!ffmpeg.isLoaded()) {
+      await ffmpeg.load();
+    }
+
+    downloadContainer.innerHTML = 'Processing video... please wait';
+
+    // Write files to FS
+    ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(videoFile));
+
+    // Save signature image from base64 to file
+    const sigData = signatureDataURL.split(',')[1];
+    const sigBuffer = Uint8Array.from(atob(sigData), c => c.charCodeAt(0));
+    ffmpeg.FS('writeFile', 'signature.png', sigBuffer);
+
+    // Build ffmpeg filter for watermark text and signature image overlay
+    // For demo, we overlay signature on bottom right, text on top left
+
+    const filter = `[0:v][1:v] overlay=W-w-10:H-h-10, drawtext=text='Thanks: ${userName}':x=10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=0x00000099`;
+
+    try {
+      await ffmpeg.run(
+        '-i', 'input.mp4',
+        '-i', 'signature.png',
+        '-vf', filter,
+        '-c:a', 'copy',
+        'output.mp4'
+      );
+
+      const data = ffmpeg.FS('readFile', 'output.mp4');
+      const videoBlob = new Blob([data.buffer], {type: 'video/mp4'});
+      const videoUrl = URL.createObjectURL(videoBlob);
+
+      downloadContainer.innerHTML = `<a id="download-video-link" href="${videoUrl}" download="ThankYou_${userName}.mp4">Download Your Watermarked Video</a>`;
+
+    } catch(err) {
+      alert("Error processing video: " + err.message);
+      downloadContainer.innerHTML = '';
+    }
+  }
+
+  // Admin view wishes
+  function displayWishes() {
+    wishesContainer.innerHTML = '';
+    if(wishes.length === 0) {
+      wishesContainer.textContent = "No wishes submitted yet.";
+      return;
+    }
+    wishes.forEach((wish, i) => {
+      const div = document.createElement('div');
+      div.className = 'wish-entry';
+
+      const sigImg = document.createElement('img');
+      sigImg.src = wish.signatureDataURL;
+      sigImg.className = 'wish-signature';
+
+      const textDiv = document.createElement('div');
+      textDiv.className = 'wish-text';
+      textDiv.innerHTML = `<strong>${wish.userName}</strong><br/>
+        <em>${new Date(wish.timestamp).toLocaleString()}</em><br/>
+        <p>${wish.wishText}</p>`;
+
+      div.appendChild(sigImg);
+      div.appendChild(textDiv);
+
+      wishesContainer.appendChild(div);
+    });
+  }
+
+  // Update wishes view when admin views page
+  if(role === 'admin') {
+    displayWishes();
+  }
+
+  // To update wishes live when admin switches role (not implemented here)
+</script>
+
+</body>
+</html>
