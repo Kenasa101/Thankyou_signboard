@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Digital Thank You Sign Board (Role Based)</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    max-width: 900px;
+  }
+  h1, h2 {
+    text-align: center;
+  }
+  label {
+    display: block;
+    margin: 10px 0 5px;
+    font-weight: bold;
+  }
+  input[type=text], input[type=date], textarea {
+    width: 100%;
+    padding: 8px;
+    font-size: 1em;
+    box-sizing: border-box;
+  }
+  input[type=file] {
+    margin: 5px 0 15px;
+  }
+  #signature-pad {
+    border: 1px solid #ccc;
+    width: 100%;
+    height: 150px;
+    touch-action: none;
+  }
+  button {
+    padding: 10px 20px;
+    font-size: 1em;
+    margin: 10px 5px 20px 0;
+    cursor: pointer;
+  }
+  #video-preview, #photo-preview {
+    max-width: 100%;
+    margin-top: 10px;
+    border: 1px solid #ccc;
+  }
+  .wish-entry {
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin-top: 10px;
+    border-radius: 5px;
+    display: flex;
+    gap: 10px;
+  }
+  .wish-signature {
+    border: 1px solid #999;
+    width: 120px;
+    height: 100px;
+  }
+  .wish-text {
+    flex-grow: 1;
+  }
+  #download-video-link {
+    display: inline-block;
+    padding: 12px 25px;
+    margin-top: 20px;
+    background-color: #007bff;
+    color: white;
+    border-radius: 5px;
+    text-decoration: none;
+    font-weight: bold;
+  }
+  /* Role selection modal */
+  #role-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+  }
+  #role-modal > div {
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    text-align: center;
+    width: 300px;
+  }
+  #role-modal button {
+    width: 100px;
+    margin: 10px;
+  }
+  #admin-password-section {
+    margin-top: 15px;
+    display: none;
+  }
+  #admin-password-section input {
+    width: 100%;
+    padding: 6px;
+    font-size: 1em;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+  }
+</style>
+</head>
+<body>
+
+<h1>Digital Thank You Sign Board (Role Based)</h1>
+
+<!-- Role selection modal -->
+<div id="role-modal">
+  <div>
+    <h3>Select Role</h3>
+    <button id="btn-admin">Admin</button>
+    <button id="btn-user">User</button>
+    <div id="admin-password-section">
+      <input type="password" id="admin-password" placeholder="Enter admin password" />
+      <button id="admin-password-submit">Submit</button>
+      <p id="admin-password-error" style="color:red;display:none;">Wrong password. Try again.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Main form -->
+<form id="thankyou-form" style="display:none;">
+
+  <!-- Admin-only fields -->
+  <div id="admin-fields">
+    <label for="event-title">Event Title</label>
+    <input type="text" id="event-title" placeholder="Enter event title" required />
+
+    <label for="event-date">Event Date</label>
+    <input type="date" id="event-date" required />
+
+    <label for="photo-upload">Upload Event Photo</label>
+    <input type="file" id="photo-upload" accept="image/*" />
+    <img id="photo-preview" alt="Photo Preview" style="display:none" />
+  </div>
+
+  <!-- User-only fields -->
+  <div id="user-fields" style="display:none;">
+    <h3>Event Info (readonly)</h3>
+    <p><strong>Event Title:</strong> <span id="readonly-event-title"></span></p>
+    <p><strong>Event Date:</strong> <span id="readonly-event-date"></span></p>
+    <p><strong>Event Photo:</strong><br /><img id="readonly-event-photo" style="max-width:100%;border:1px solid #ccc;" /></p>
+
+    <label for="video-upload">Upload Thank You Video (mp4, max 10MB)</label>
+    <input type="file" id="video-upload" accept="video/mp4" required />
+    <video id="video-preview" controls style="display:none"></video>
+
+    <label for="user-name">Your Name (for watermark)</label>
+    <input type="text" id="user-name" placeholder="Enter your name" required />
+
+    <label for="wish-text">Your Wish</label>
+    <textarea id="wish-text" rows="3" placeholder="Write your wish here..." required></textarea>
+
+    <label>Signature (Draw below)</label>
+    <canvas id="signature-pad"></canvas>
+    <button type="button" id="clear-signature">Clear Signature</button>
+  </div>
+
+  <button type="submit" id="submit-btn">Submit & Generate Watermarked Video</button>
+</form>
+
+<!-- Download button container -->
+<div id="download-container"></div>
+
+<!-- Admin wishes viewer -->
+<div id="admin-wishes-container" style="display:none;">
+  <h2>Submitted Wishes</h2>
+  <div id="wishes-container"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.1/dist/ffmpeg.min.js"></script>
+
+<script>
+  // Globals
+  let role = null;
+  const ADMIN_PASSWORD = 'admin123';
+
+  // DOM Elements
+  const roleModal = document.getElementById('role-modal');
+  const btnAdmin = document.getElementById('btn-admin');
+  const btnUser = document.getElementById('btn-user');
+  const adminPasswordSection = document.getElementById('admin-password-section');
+  const adminPasswordInput = document.getElementById('admin-password');
+  const adminPasswordSubmit = document.getElementById('admin-password-submit');
+  const adminPasswordError = document.getElementById('admin-password-error');
+
+  const form = document.getElementById('thankyou-form');
+  const adminFields = document.getElementById('admin-fields');
+  const userFields = document.getElementById('user-fields');
+
+  const readonlyEventTitle = document.getElementById('readonly-event-title');
+  const readonlyEventDate = document.getElementById('readonly-event-date');
+  const readonlyEventPhoto = document.getElementById('readonly-event-photo');
+
+  const photoUpload = document.getElementById('photo-upload');
+  const photoPreview = document.getElementById('photo-preview');
+
+  const videoUpload = document.getElementById('video-upload');
+  const videoPreview = document.getElementById('video-preview');
+
+  const signaturePadCanvas = document.getElementById('signature-pad');
+  const clearSignatureBtn = document.getElementById('clear-signature');
+
+  const wishesContainer = document.getElementById('wishes-container');
+  const adminWishesContainer = document.getElementById('admin-wishes-container');
+
+  const downloadContainer = document.getElementById('download-container');
+
+  // Signature Pad setup
+  const signaturePad = new SignaturePad(signaturePadCanvas, {
+    backgroundColor: 'rgba(255,255,255,0)',
+    penColor: 'black',
+  });
+
+  function resizeCanvas() {
+    const ratio = Math.max(window.devicePixelRatio || 1, 1);
+    signaturePadCanvas.width = signaturePadCanvas.offsetWidth * ratio;
+    signaturePadCanvas.height = signaturePadCanvas.offsetHeight * ratio;
+    signaturePadCanvas.getContext('2d').scale(ratio, ratio);
+    signaturePad.clear();
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  clearSignatureBtn.addEventListener('click', () => signaturePad.clear());
+
+  // ffmpeg setup
+  const { createFFmpeg, fetchFile } = FFmpeg;
+  const ffmpeg = createFFmpeg({ log: true });
+
+  // Store wishes and event info (in-memory demo)
+  let wishes = [];
+  let eventInfo = {
+    title: '',
+    date: '',
+    photoFile: null,
+    photoURL: ''
+  };
+
+  // Role selection handlers
+  btnAdmin.onclick = () => {
+    adminPasswordSection.style.display = 'block';
+    adminPasswordError.style.display = 'none';
+  };
+
+  adminPasswordSubmit.onclick = () => {
+    if (adminPasswordInput.value === ADMIN_PASSWORD) {
+      role = 'admin';
+      roleModal.style.display = 'none';
+      setupPageForRole();
+    } else {
+      adminPasswordError.style.display = 'block';
+    }
+  };
+
+  btnUser.onclick = () => {
+    role = 'user';
+    roleModal.style.display = 'none';
+    setupPageForRole();
+  };
+
+  // Setup UI based on role
+  function setupPageForRole() {
+    form.style.display = 'block';
+
+    if (role === 'admin') {
+      adminFields.style.display = 'block';
+      userFields.style.display = 'none';
+      adminWishesContainer.style.display = 'block';
+      downloadContainer.innerHTML = '';
+
+      // Load saved event info from localStorage if any
+      const saved = localStorage.getItem('eventInfo');
+      if (saved) {
+        eventInfo = JSON.parse(saved);
+        document.getElementById('event-title').value = eventInfo.title;
+        document.getElementById('event-date').value = eventInfo.date;
+        if(eventInfo.photoURL) {
+          photoPreview.src = eventInfo.photoURL;
+          photoPreview.style.display = 'block';
+        }
+      }
+
+    } else {
+      // User role UI
+      adminFields.style.display = 'none';
+      userFields.style.display = 'block';
+      adminWishesContainer.style.display = 'none';
+      downloadContainer.innerHTML = '';
+
+      // Load event info from localStorage and display readonly
+      const saved = localStorage.getItem('eventInfo');
+      if (saved) {
+        eventInfo = JSON.parse(saved);
+        readonlyEventTitle.textContent = eventInfo.title || '(Not set)';
+        readonlyEventDate.textContent = eventInfo.date || '(Not set)';
+        if(eventInfo.photoURL) {
+          readonlyEventPhoto.src = eventInfo.photoURL;
+          readonlyEventPhoto.style.display = 'block';
+        } else {
+          readonlyEventPhoto.style.display = 'none';
+        }
+      } else {
+        // No event info yet
+        readonlyEventTitle.textContent = '(Not set)';
+        readonlyEventDate.textContent = '(Not set)';
+        readonlyEventPhoto.style.display = 'none';
+      }
+    }
+  }
+
+  // Photo preview for Admin photo upload
+  photoUpload.addEventListener('
